@@ -21,13 +21,13 @@ fn main() -> io::Result<()> {
 
         if player_name.is_empty() {
             println!("");
-            thread::sleep(Duration::from_millis(200));
+            thread::sleep(Duration::from_millis(400));
             continue;
         }
 
         // 获取歌曲元数据
         let metadata = get_metadata(&player_name);
-        let title = metadata.get("title").cloned().unwrap_or_default();
+        let title = metadata.get("xesam:title").cloned().unwrap_or_default();
         let position = metadata.get("position").cloned().unwrap_or_default();
         let new_song_id = get_song_id(&player_name, &metadata);
 
@@ -43,13 +43,31 @@ fn main() -> io::Result<()> {
                     parse_lyrics(&lyrics, &mut lyrics_map);
                 }
             }
+
+            // 发送消息
+            let _ = Command::new("notify-send")
+                .args([
+                    "-h",
+                    "string:x-dunst-stack-tag:music",
+                    &format!(
+                        "{}-{}",
+                        metadata.get("xesam:title").cloned().unwrap_or_default(),
+                        metadata.get("xesam:artist").cloned().unwrap_or_default()
+                    ),
+                    &metadata.get("xesam:album").cloned().unwrap_or_default(),
+                    "-t",
+                    "500",
+                    "--icon",
+                    &metadata.get("mpris:artUrl").cloned().unwrap_or_default(),
+                ])
+                .output();
         }
 
         // 获取当前歌词
         let current_lyric = if !position.is_empty() && !lyrics_map.is_empty() {
             let Ok(pos_secs) = parse_duration(&position) else {
                 println!("");
-                thread::sleep(Duration::from_millis(200));
+                thread::sleep(Duration::from_millis(400));
                 continue;
             };
             find_current_lyric(pos_secs, &lyrics_map)
@@ -67,7 +85,7 @@ fn main() -> io::Result<()> {
             }
         );
         // 保持200ms间隔
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(400));
     }
 }
 
@@ -75,18 +93,19 @@ fn main() -> io::Result<()> {
 fn get_metadata(player: &str) -> HashMap<String, String> {
     let mut metadata = HashMap::new();
 
-    let keys = ["title", "artist", "album", "mpris:artUrl", "mpris:trackid"];
+    // 获取歌曲信息
+    let output = Command::new("playerctl")
+        .args([&format!("--player={}", player), "metadata"])
+        .output()
+        .unwrap();
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
-    for key in keys {
-        let output = Command::new("playerctl")
-            .args(["--player", player, "metadata", key])
-            .output()
-            .unwrap();
-
-        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-        if !value.is_empty() {
-            metadata.insert(key.to_string(), value);
+    for line in value.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 {
+            let key = parts[1].to_string();
+            let data = parts[2..].join(" "); // 处理带空格的值，比如中文标题
+            metadata.insert(key, data);
         }
     }
 
